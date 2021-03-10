@@ -24,112 +24,121 @@
 // PC13
 
 
-
-
 #include "stm32f10x.h"
 
 static uint32_t msTick;
 
-//static uint8_t usartBuf[256];
-//static uint32_t usartBufIdx = 0;
 
-void USART_Config(void);
-void USART_SendCharacter(uint8_t iData);
-void USART_SendSTR(uint8_t* iStr);
+// Enableg the PC13 LED
+static uint32_t isPC13On = 0;
+void Blink(void);
+void BlinkingTool_Config(void);
 
+
+// USART1
+static uint16_t usartBuf[256];
+static uint32_t usartBufIdx = 0;
+
+void USART1_Config(void);
+void USART1_SendCharacter(volatile uint16_t iData);
+void USART1_SendSTR(volatile uint16_t* iStr);
+void USART1_EraseBuffer(void);
+
+
+// Interruptions
 void SysTick_Handler(void) {
-	msTick++;
+  msTick++;
 }
-//void USART1_IRQHandler(void) {
-//	if (USART1 -> ISR & USART_ISR_RXNE) {
-//		usartBuf[usartBufIdx++] = USART1->RDR;	
-//	}
-//}
+
+void USART1_IRQHandler(void) {
+  if (USART1 -> SR & USART_SR_RXNE) {
+    usartBuf[usartBufIdx++] = USART1->DR;  
+  }
+}
+
 
 int main() {
-	static uint32_t flag; 
-	
-	SysTick_Config(SystemCoreClock/1000);
-	//SystemInit();
-	
-	USART_Config();
-	
-	RCC->APB2ENR |= RCC_APB2ENR_IOPCEN;
-	
-	GPIOC->CRH |= GPIO_CRH_MODE13_0;
-	GPIOC->CRH &= ~GPIO_CRH_CNF13;
-	flag = 0;
-	
-	while(1) {
-		if (msTick>500) {
-			msTick = 0;
-			if (flag== 0) {
-				flag = 1;
-				GPIOC->BSRR |= GPIO_BSRR_BS13;
-				USART1->DR = 10;	
-			}
-			else {
-				flag = 0;
-				GPIOC->BSRR |= GPIO_BSRR_BR13;
-				USART1->DR = 1;	
-			}
-		}
-	}	
-}
-//void USART_SendSTR(uint8_t* iStr) {
-//	uint8_t a;   
-//  while (1) {
-//		a = *iStr;
-//    if(a) {
-//			USART_SendCharacter(a);
-//    } else {
-//			break;
-//		}
-//    iStr++;
-//	} 
-//}
 
-//void USART_SendCharacter(uint8_t iData) {
-//	while(!(USART1->ISR & USART_ISR_TC)); //waiting for transmission complete
-//	USART1->TDR = iData;
-//}
+  SysTick_Config(SystemCoreClock/1000);
+  BlinkingTool_Config();
+  USART1_Config();
 
-void USART_Config(void) {
-	
-	// USART1 clock enable
-	RCC -> APB2ENR |=RCC_APB2ENR_USART1EN;
-	
-	
-	//0x1A0B;//48000000/12;//480000/96;//0x341;//0x1601;//0x9C4;//0x34D;//480000/96;//1388;//0x681; //0x681;//0x9C4;// 0x681; 0x341h 0x64
-	//USART1 -> BRR = 0x341; 
-	//USART1->BRR = 0xEA6;
-	
-	// Bodrate for 19200 on 72Mhz
-	//USART1->BRR = 0xEA6;
-	USART1->BRR = 0xea6;
-	
-	// USART1 ON, TX ON, RX ON
-	USART1->CR1 |= USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
+  while(1) {
 
-	// GPIOA clock ON. Alter function clock ON
-	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_AFIOEN;
-	// Clear CNF bit 9
-	GPIOA->CRH	&= ~GPIO_CRH_CNF9;
-	// Set CNF bit 9 to 10 - AFIO Push-Pull
-	GPIOA->CRH	|= GPIO_CRH_CNF9_1;
-	// Set MODE bit 9 to Mode 01 = 10MHz
-	GPIOA->CRH	|= GPIO_CRH_MODE9_0;
-	
-	
-	// Clear CNF bit 9
-	GPIOA->CRH	&= ~GPIO_CRH_CNF10;
-	// Set CNF bit 9 to 01 = HiZ
-	GPIOA->CRH	|= GPIO_CRH_CNF10_0;
-	// Set MODE bit 9 to Mode 01 = 10MHz
-	GPIOA->CRH	&= ~GPIO_CRH_MODE10;
-	
-	// test
-	// USART1->DR = 10;	
+    // sent buffer to the usart1
+    if (*usartBuf) {
+      USART1_SendSTR(usartBuf);
+      USART1_EraseBuffer();
+    }
+
+    // blinking
+    if (msTick>500) {
+      msTick = 0;
+      Blink();
+    }
+  }
 }
 
+// ==============================================
+
+void USART1_EraseBuffer(void) {
+  *usartBuf = '\0';
+  usartBufIdx = 0;
+}
+
+void USART1_SendSTR(volatile uint16_t* iStr) {
+  volatile uint16_t a;
+  while (1) {
+    a = *iStr;
+    if(a) {
+      USART1_SendCharacter(a);
+    } else {
+      break;
+    }
+    iStr++;
+  } 
+}
+
+void USART1_SendCharacter(volatile uint16_t iData) {
+  while(!(USART1->SR & USART_SR_TC)); //waiting for transmission complete
+  USART1->DR = iData;
+}
+
+void USART1_Config(void) {
+
+  RCC->APB2ENR |=RCC_APB2ENR_USART1EN; // USART1 clock enable
+  USART1->BRR = 0xea6; // bodrate for 19200 on 72Mhz
+
+  USART1->CR1 |= 
+    USART_CR1_UE |    // USART1 on
+    USART_CR1_TE |    // TX on
+    USART_CR1_RE |    // RX on
+    USART_CR1_RXNEIE; // interruption on
+
+  RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_AFIOEN; // GPIOA clock ON. Alter function clock ON
+  GPIOA->CRH  &= ~GPIO_CRH_CNF9;   // clear CNF bit 9
+  GPIOA->CRH  |= GPIO_CRH_CNF9_1;  // set CNF bit 9 to 10 - AFIO Push-Pull
+  GPIOA->CRH  |= GPIO_CRH_MODE9_0; // set MODE bit 9 to Mode 01 = 10MHz
+
+  GPIOA->CRH  &= ~GPIO_CRH_CNF10;  // clear CNF bit 9
+  GPIOA->CRH  |= GPIO_CRH_CNF10_0; // set CNF bit 9 to 01 = HiZ
+  GPIOA->CRH  &= ~GPIO_CRH_MODE10; // set MODE bit 9 to Mode 01 = 10MHz
+
+  NVIC_EnableIRQ(USART1_IRQn);
+  __enable_irq();
+}
+
+// ==============================================
+
+void Blink() {
+  GPIOC->BSRR |= isPC13On == 0 ? GPIO_BSRR_BS13 : GPIO_BSRR_BR13;
+  isPC13On = !isPC13On;
+}
+
+void BlinkingTool_Config() {
+  RCC->APB2ENR |= RCC_APB2ENR_IOPCEN;
+  GPIOC->CRH |= GPIO_CRH_MODE13_0;
+  GPIOC->CRH &= ~GPIO_CRH_CNF13;
+  isPC13On = 0;
+}
 
