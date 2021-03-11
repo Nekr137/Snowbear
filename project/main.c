@@ -24,9 +24,15 @@
 // PC13
 
 
+
 #include "stm32f10x.h"
 
-static volatile uint32_t msTick;
+
+// Utils
+uint32_t StrToInt(volatile uint16_t* iapStr);
+
+static volatile uint32_t msTick = 0;
+static volatile uint32_t msTick2 = 0;
 
 
 // Using the PC13 LED as a debugger tool
@@ -37,7 +43,7 @@ void BlinkingTool_Config(void);
 
 // USART1
 static uint16_t usartBuf[256];
-static uint32_t usartBufIdx = 0;
+static uint8_t usartBufIdx = 0;
 
 void USART1_Config(void);
 void USART1_SendCharacter(volatile uint16_t iData);
@@ -52,6 +58,7 @@ void PWM_SetValue(const uint16_t iValue);
 // Interruptions
 void SysTick_Handler(void) {
   msTick++;
+  msTick2++;
 }
 
 void USART1_IRQHandler(void) {
@@ -71,16 +78,23 @@ int main() {
   while(1) {
 
     // sent buffer to the usart1
-    if (*usartBuf) {
-      USART1_SendSTR(usartBuf);
-      USART1_EraseBuffer();
+    if (msTick2 > 100) {
+      if (*usartBuf) {
+        USART1_SendSTR(usartBuf); // echo
+
+        volatile uint16_t value= StrToInt(usartBuf) & 0xFFFF;
+        PWM_SetValue(value);
+
+        USART1_EraseBuffer();
+      }
+      msTick2 = 0;
     }
 
     // pwm test
-    PWM_SetValue(msTick & 0xFFFF);
+    //PWM_SetValue(msTick & 0xFFFF);
 
     // blinking
-    if (msTick>1000) {
+    if (msTick > 1000) {
       msTick = 0;
       Blink();
     }
@@ -90,7 +104,8 @@ int main() {
 // ==============================================
 
 void USART1_EraseBuffer(void) {
-  *usartBuf = '\0';
+  for (volatile uint8_t i = 0; i < usartBufIdx; ++i)
+    usartBuf[i] = '\0';
   usartBufIdx = 0;
 }
 
@@ -124,13 +139,13 @@ void USART1_Config(void) {
     USART_CR1_RXNEIE; // interruption on
 
   RCC->APB2ENR |= RCC_APB2ENR_IOPAEN | RCC_APB2ENR_AFIOEN; // GPIOA clock ON. Alter function clock ON
-  GPIOA->CRH &= ~GPIO_CRH_CNF9;   // clear CNF bit 9
-  GPIOA->CRH |= GPIO_CRH_CNF9_1;  // set CNF bit 9 to 10 - AFIO Push-Pull
-  GPIOA->CRH |= GPIO_CRH_MODE9_0; // set MODE bit 9 to Mode 01 = 10MHz
+  GPIOA->CRH &= ~GPIO_CRH_CNF9;
+  GPIOA->CRH |= GPIO_CRH_CNF9_1;
+  GPIOA->CRH |= GPIO_CRH_MODE9_0;
 
-  GPIOA->CRH &= ~GPIO_CRH_CNF10;  // clear CNF bit 9
-  GPIOA->CRH |= GPIO_CRH_CNF10_0; // set CNF bit 9 to 01 = HiZ
-  GPIOA->CRH &= ~GPIO_CRH_MODE10; // set MODE bit 9 to Mode 01 = 10MHz
+  GPIOA->CRH &= ~GPIO_CRH_CNF10;
+  GPIOA->CRH |= GPIO_CRH_CNF10_0;
+  GPIOA->CRH &= ~GPIO_CRH_MODE10;
 
   NVIC_EnableIRQ(USART1_IRQn);
   __enable_irq();
@@ -154,6 +169,8 @@ void BlinkingTool_Config() {
 
 void PWM_Config() {
 
+  // PA1, CH2, TIM2
+
   RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;
   RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
   RCC->APB2ENR |= RCC_APB2ENR_AFIOEN;
@@ -166,22 +183,37 @@ void PWM_Config() {
 
   TIM2->CR1  = 0;
   TIM2->CR2  = 0;
-  TIM2->DIER = 0;
+  TIM2->DIER = 0; // disable interruptions
   
   TIM2->CCMR1 = TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_2;
   
   TIM2->PSC  = 80-1;
-  TIM2->ARR  = 1000;
-  TIM2->CCR2 = 40;
-  TIM2->CCER = TIM_CCER_CC2E;
+  TIM2->ARR  = 2000;          // auto-reload value (pwm frequency)
+  TIM2->CCR2 = 40;            // capture/compare (%)
+  TIM2->CCER = TIM_CCER_CC2E; // select active level 
+
+  // Generate an update event to reload the Prescaler
+  // and the repetition counter value (if applicable) immediately
   TIM2->EGR  = TIM_EGR_UG;
-  TIM2->CR1 |= TIM_CR1_CEN;
+  
+  TIM2->CR1 |= TIM_CR1_CEN;   // run the counter
 }
 
 void PWM_SetValue(const uint16_t iValue) {
-  while(!TIM2->SR || !TIM_SR_UIF) {
+  while (!TIM2->SR || !TIM_SR_UIF) {
   }
   TIM2->SR |= ~TIM_SR_UIF;
   TIM2->CCR2 = iValue;
 }
 
+// ==============================================
+
+uint32_t StrToInt(volatile uint16_t* iapStr) {
+  volatile uint32_t res = 0;
+  while (*iapStr) {
+    volatile uint32_t asInt = (*iapStr) - '0';
+    res = res * 10 + asInt;
+    iapStr++;
+  }
+  return res;
+}
